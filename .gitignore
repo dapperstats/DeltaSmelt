@@ -1,0 +1,15 @@
+
+data/Salvage_data_FTP.mdb
+data/20-mm.mdb
+data/deltaoutflow.csv
+data/DeltaVelocities.RData
+data/Map/DeltaMap.cpg
+data/Map/DeltaMap.dbf
+data/Map/DeltaMap.prj
+data/Map/DeltaMap.sbn
+data/Map/DeltaMap.sbx
+data/Map/DeltaMap.shp
+data/Map/DeltaMap.shp.xml
+data/Map/DeltaMap.shx
+raw_data_processing.R
+raw_data_processing_functions.R
