@@ -11,5 +11,4 @@ data/Map/DeltaMap.sbx
 data/Map/DeltaMap.shp
 data/Map/DeltaMap.shp.xml
 data/Map/DeltaMap.shx
-raw_data_processing.R
-raw_data_processing_functions.R
+
