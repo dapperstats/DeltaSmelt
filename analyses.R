@@ -20,6 +20,7 @@ load("data/processed_20mm.RData")
 load("data/processed_velocity.RData")
 load("data/processed_map.RData")
 load("data/processed_outflow.RData")
+load("data/processed_salvage.RData")
 
 DMY_inv <- prepare_data(mm20_p, spatial_p, vel_p, "dmy")
 ds_data <- prepare_data(mm20_p, spatial_p, vel_p, "all", outflow_p)
