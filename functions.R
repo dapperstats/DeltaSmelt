@@ -1988,3 +1988,1167 @@ delta_map <- function(spatial_p){
 
 
 }
+
+##############################################################################
+#
+# prepare_model_data
+#
+# prepares the data for inputting into the models
+#
+# Inputs: the processed 20mm data 
+#         the processed spatial data
+#         the processed velocity data
+#         the model number
+#			
+# Outputs: list of inputs formatted for the model of interest
+#
+# current components of the "all" list:
+#
+# Y: observed counts of delta smelt [16587]
+# V: tow volume [16587]
+# NT: number of tows [1]: 16587
+# X: visit covariates [5571 x 13]
+# NC: number of visit covariates [1]: 13
+# V: tow volume [16587]
+# DSid: Date Station id [16587]
+# NDS: number of date station combinations [1]: 16587 
+# TO: (within visit) tow order [16587]
+# W: tow inst vel [16587]
+# DM: between-station distance matrix [34 x 34]
+# Sid: station ID of each date-station combination [5571]
+# NS: number of stations [1]: 34
+# Yrid: year ID of each date-station combination [5571]
+# NYr: number of years [1]: 20
+# MSPY: max number of surveys in a year [1]: 11
+# week: among-year week index for potential visits within each year [20 x 11]
+# SO: (within year) survey order [5571]
+# MSSPY: max number of survey-station combos in a year [1]: 374
+# SSid: within year survey-station identifier for a visit
+# Z: tow covariates [16587 x 4]
+# NCT: number of tow covariates [1]: 4
+# msd: means and sds of pre-transformed variables
+# outflow: outflow_p table
+
+prepare_data <- function(mm20_p, spatial_p, vel_p, model, outflow_p = NULL){
+
+# tow-level data
+
+  stations_in <- mm20_p$tows20mm$Station %in% rownames(spatial_p$stalocs)
+  dates_in <- as.Date(mm20_p$tows20mm$Date) < as.Date("2015-01-01")
+  vol_in <- !is.na(mm20_p$tows20mm$V)
+  tows_in <- which(stations_in & dates_in & vol_in)
+  tows20mmR <- mm20_p$tows20mm[tows_in, ]   
+
+# visit-level data
+
+  stations_in <- mm20_p$visits20mm$Station %in% rownames(spatial_p$stalocs)
+  dates_in <- as.Date(mm20_p$visits20mm$Date) < as.Date("2015-01-01")
+  visits_in <- which(stations_in & dates_in)
+  visits20mmR <- mm20_p$visits20mm[visits_in, ]
+
+  # average EC
+
+  ECs <- cbind(visits20mmR$TopEC, visits20mmR$BottomEC)
+  visits20mmR$ECav <- apply(ECs, 1, mean, na.rm = T)
+
+  # add velocity
+
+  dt <- difftime(as.Date(visits20mmR$Date), as.Date("1995-01-01"))
+  visits20mmR$Week <- floor(as.numeric(dt)/ 7 ) + 1
+  visits20mmR$WeeklyAverageVelocity <- NA
+
+  for(i in 1:nrow(visits20mmR)){
+    week_match <- which(vel_p$warvt$week == visits20mmR$Week[i])
+    station_match <- which(colnames(vel_p$warvt) == visits20mmR$Station[i])
+    wav <- vel_p$warvt[week_match, station_match]
+    visits20mmR$WeeklyAverageVelocity[i] <- wav
+  }   
+
+  # remove visits with any missing covariates
+
+  cols <- c("ECav", "WeeklyAverageVelocity", "TotalCalanoidDENSITY", "Secchi")
+  NAcovs <- which(apply(is.na(visits20mmR[ , cols]), 1, sum) > 0)
+  visits20mmRNAomit <- visits20mmR[-NAcovs, ]
+
+# remove tows with any missing covariates
+
+  cols <- c("TimeFOD", "Bottom.Depth", "InstVel")
+  NAcovs <- which(apply(is.na(tows20mmR[ , cols]), 1, sum) > 0)
+  tows20mmRNAomit <- tows20mmR[-NAcovs, ]
+
+# remove visits without associated tows
+
+  visits_with_tows <- rep(NA, nrow(visits20mmRNAomit))
+  for(i in 1:nrow(visits20mmRNAomit)){
+    date_in <- tows20mmRNAomit$Date == visits20mmRNAomit$Date[i]
+    station_in <- tows20mmRNAomit$Station == visits20mmRNAomit$Station[i]
+    visits_with_tows[i] <- any(date_in & station_in)
+  }
+  visits20mmRNAomit <- visits20mmRNAomit[visits_with_tows, ]
+
+# remove tows without associated visits
+
+  tows_in_visits <- rep(NA, nrow(tows20mmRNAomit))
+  for(i in 1:nrow(tows20mmRNAomit)){
+    date_in <- visits20mmRNAomit$Date == tows20mmRNAomit$Date[i]
+    station_in <- visits20mmRNAomit$Station == tows20mmRNAomit$Station[i]
+    tows_in_visits[i] <- any(date_in & station_in)
+  }
+  tows20mmRNAomit <- tows20mmRNAomit[tows_in_visits,]
+
+# prep visit covariate table
+
+  # fraction of the year
+
+  jd <- as.numeric(format(visits20mmRNAomit$Date, "%j"))
+  yr <- as.numeric(format(visits20mmRNAomit$Date, "%Y"))
+  nye <- as.Date(paste(yr, "-12-31", sep =""))
+  jdnye <- as.numeric(format(nye, "%j"))
+  foy <- jd / jdnye
+
+  FOYm <- mean(foy)
+  FOYsd <- sd(foy)
+  FOY <- (foy - FOYm) / FOYsd  
+
+  # year
+
+  YEAR <- yr - 1994
+  YEARm <- mean(YEAR)
+  YEARsd <- sd(YEAR)
+  YEARS <- (YEAR - YEARm) / YEARsd  
+
+  # EC
+
+  lECav <- log(visits20mmRNAomit$ECav)
+  lECavm <- mean(lECav, na.rm = T)
+  lECavsd <- sd(lECav, na.rm = T)
+  lECavS <- (lECav - lECavm) / lECavsd
+
+  # Secchi
+
+  lSE <- log(visits20mmRNAomit$Secchi)
+  lSEm <- mean(lSE, na.rm = T)
+  lSEsd <- sd(lSE, na.rm = T)
+  lSES <- (lSE - lSEm) / lSEsd     
+
+  # Calanoid Density
+
+  lCAL <- log(visits20mmRNAomit$TotalCalanoidDENSITY + 0.1)
+  lCALm <- mean(lCAL, na.rm = T)
+  lCALsd <- sd(lCAL, na.rm = T)
+  lCALS <- (lCAL- lCALm) / lCALsd      
+
+  # Average Velocity
+
+  VEL <- ((visits20mmRNAomit$WeeklyAverageVelocity))
+  VELm <- mean(VEL, na.rm = T)
+  VELsd <- sd(VEL, na.rm = T)
+  VELS <- (VEL - VELm) / VELsd 
+
+  X <- data.frame(int = 1, sFOY = FOY, sFOY2 = FOY^2,
+                  yr = YEARS, yr2 = (YEARS)^2,
+                  ec = lECavS, ec2 = (lECavS)^2, 
+                  sec = lSES, sec2 = (lSES)^2, 
+                  cal = lCALS, cal2 = (lCALS)^2, 
+                  vel = VELS, vel2 = (VELS)^2) 
+  X <- as.matrix(X) 
+  NX <- ncol(X)
+
+# means and sds of variables
+
+  msd <- c(FOYsd = FOYsd, FOYm = FOYm, YEARsd = YEARsd, YEARm = YEARm, 
+           lECavsd = lECavsd, lECavm = lECavm, lSEsd = lSEsd, lSEm = lSEm,
+           lCALsd = lCALsd, lCALm = lCALm, VELsd = VELsd, VELm = VELm)
+
+# prep tow covariate table
+
+  # instantaneous velocity
+
+  ivel <- tows20mmRNAomit$InstVel
+  ivelm <- mean(ivel, na.rm = T)
+  ivelsd <- sd(ivel, na.rm = T)
+  ivels <- (ivel - ivelm) / ivelsd
+
+  # depth
+
+  lbd <- log(tows20mmRNAomit$Bottom.Depth)
+  lbdm <- mean(lbd, na.rm = T)
+  lbdsd <- sd(lbd, na.rm = T)
+  lbds <- (lbd - lbdm) / lbdsd
+
+
+  tod <- tows20mmRNAomit$TimeFOD
+  todm <- mean(tod, na.rm = T)
+  todsd <- sd(tod, na.rm = T)
+  tods <- (tod - todm) / todsd
+
+  Z <- data.frame(int = 1, ivel = ivels, depth = lbds, tod = tods) 
+  Z <- as.matrix(Z) 
+  NZ <- ncol(Z)
+
+# instantaneous velocity: made absolute and scaled to [0-1]
+
+  W <- abs(tows20mmRNAomit$InstVel)
+  W <- W / max(W)
+
+# Observations
+  
+  Y <- tows20mmRNAomit$LCSmeltA
+  V <- tows20mmRNAomit$V / 1000
+  NT <- length(Y)
+
+
+# associate visits and tows via DS (DateStation)
+
+  DS <- paste0(tows20mmRNAomit$Date, "_", tows20mmRNAomit$Station)
+  DSid <- as.numeric(as.factor(DS))
+  UDS <- unique(DSid)
+  NDS <- length(UDS)
+
+# order the tows within visits
+
+  dtimes <- paste(tows20mmRNAomit$Date, tows20mmRNAomit$Time, sep = " ")
+  TO <- rep(NA, NDS)
+  for(i in 1:NDS){
+    matches <- which(DSid == UDS[i])
+    TO[matches] <- order(dtimes[matches])
+  }
+
+# distance matrix
+
+  DM <- as.matrix((spatial_p$waterDist)/1000)
+
+# associate each visit with a station id to access the distance matrix
+
+  S <- visits20mmRNAomit$Station
+  Sid <- rep(NA, length(S))
+  for (i in 1:length(S)){
+    Sid[i] <- which(rownames(DM) == S[i])
+  }
+  NS <- length(unique(S))
+
+# associate each visit with a year id to block VCV matrices
+
+  Yr <- format(visits20mmRNAomit$Date, "%Y")
+  Yrid <- as.numeric(as.factor(Yr))
+  Yr <- as.numeric(Yr)
+  UYr <- unique(Yrid)
+  NYr <- length(UYr)
+
+# survey number within the year and max number of surveys in a year
+#   survey number isn't necessarily in order and they skip, so create own
+#   WYSurvey based on the first week of each
+
+  visits20mmRNAomit$WYSurvey <- NA
+
+  for(i in 1:NYr){
+
+    SNV <- visits20mmRNAomit$SurveyNumber[Yrid == UYr[i]]
+    weekses <- visits20mmRNAomit$Week[Yrid == UYr[i]]
+    SNV2 <- rep(NA, length(SNV))
+    weekses2 <- rep(NA, length(weekses))
+    for(j in 1:length(weekses2)){
+      weekses2[j] <- min(weekses[SNV == SNV[j]])
+    }
+    uweekses2 <- unique(sort(weekses2))
+    for(j in 1:length(weekses2)){
+      SNV2[j] <- which(uweekses2 == weekses2[j])
+    }
+    visits20mmRNAomit$WYSurvey[Yrid == UYr[i]] <- SNV2
+  }
+
+  SO <- visits20mmRNAomit$WYSurvey
+  MSPY <- max(visits20mmRNAomit$WYSurvey)
+
+# week of each survey for each year
+#   using the most common week for the surveys that span a week break
+#   (only happened 15 of 176 times, tended to involve <= 15% of visits in the
+#    survey and no surveys ever spanned three calendar weeks
+
+
+  week <- matrix(NA, nrow = NYr, ncol = MSPY)
+  for(i in 1:NYr){
+    for(j in 1:MSPY){
+      matched <- Yrid == UYr[i] & visits20mmRNAomit$WYSurvey == j
+      wk <- visits20mmRNAomit$Week[matched]
+      if (length(wk) == 0){
+        week[i, j] <- week[i, j - 1] + 1
+      } else {
+        week[i, j] <- as.numeric(names(table(wk))[which.max(table(wk))])
+      }
+    }
+  }
+
+# station-survey index for each visit and max number of stations-survey per 
+#   year
+
+  posSS <- paste0(rep(1:NS, MSPY), "_", rep(1:MSPY, each = NS))
+  SS <- paste0(Sid, "_", SO)
+  SSid <- rep(NA, length(SS))
+  for(i in 1:length(SS)){
+    SSid[i] <- which(posSS == SS[i])
+  }
+  MSSPY <- MSPY * NS
+
+
+# create model-specific outputs
+
+  # model 1 is a single average density
+
+  if (model == 1){
+    out <- list(Y = Y, V = V, NT = NT)
+  }
+
+  # model2 draws a visit-specific density from the global and
+  #  groups the data by DS (DateStation)
+
+  if (model == 2){
+    out <- list(Y = Y, V = V, NT = NT, DSid = DSid, NDS = NDS)
+  }
+
+  # model3 adds in the linear predictors 
+
+  if (model == 3){
+    out <- list(Y = Y, V = V, NT = NT, X = X, NX = NX, DSid = DSid, NDS = NDS)
+  }
+
+  # model4 adds in tow-level impact of instantaneous velocity with a 
+  #  deterministic forced negative exponential
+
+  if (model == 4){
+    out <- list(Y = Y, V = V, NT = NT, X = X, NX = NX, DSid = DSid, NDS = NDS,
+                W = W)
+  }
+
+  # model5 adds in tow-level impact of instantaneous velocity with a 
+  #  exponential that is not forced negative and is noisy 
+
+  if (model == 5){
+    out <- list(Y = Y, V = V, NT = NT, X = X, NX = NX, DSid = DSid, NDS = NDS,
+                W = W)
+  }
+
+  # model6 adds spatial autocorrelation to model 5
+
+  if (model == 6){
+    out <- list(Y = Y, V = V, NT = NT, X = X, NX = NX, DSid = DSid, NDS = NDS,
+                W = W, DM = DM, Sid = Sid, NS = NS, Yrid = Yrid, NYr = NYr)
+  }
+
+  # model7 adds temporal autocorrelation to model 5
+
+  if (model == 7){
+    out <- list(Y = Y, V = V, NT = NT, X = X, NX = NX, DSid = DSid, NDS = NDS,
+                W = W, week = week, MSPY = MSPY, SO = SO, 
+                Yrid = Yrid, NYr = NYr)
+  }
+
+  # model8 adds spatial and temporal autocorrelation to model 5
+
+  if (model == 8){
+    out <- list(Y = Y, V = V, NT = NT, X = X, NX = NX, DSid = DSid, NDS = NDS,
+                W = W, week = week, MSPY = MSPY, SO = SO, 
+                DM = DM, Sid = Sid, NS = NS, Yrid = Yrid, NYr = NYr)
+  }
+
+  # model9 adds spatioemporal autocorrelation to model 5
+
+  if (model == 9){
+    out <- list(Y = Y, V = V, NT = NT, X = X, NX = NX, DSid = DSid, NDS = NDS,
+                W = W, week = week, MSPY = MSPY, NS = NS, MSSPY = MSSPY,
+                DM = DM, SSid = SSid, Yrid = Yrid, NYr = NYr)
+  }
+
+  # everything that could be used
+
+  if (model == "all"){
+    out <- list(Y = Y, V = V, NT = NT, X = X, NX = NX, DSid = DSid, NDS = NDS,
+                DM = DM, Sid = Sid, NS = NS, Yrid = Yrid, NYr = NYr,
+                week = week, MSPY = MSPY, SO = SO, TO = TO, W = W,
+                MSSPY = MSSPY, SSid = SSid, Z = Z, NZ = NZ, msd = msd,
+                outflow = outflow_p)
+  }
+
+  # just the distance matrix among Y samples
+
+  if (model == "dmy"){
+
+    DMY <- matrix(NA, NT, NT)
+    for(i in 1:NT){
+      for(j in 1:NT){
+        DMY[i,j] <- DM[Sid[DSid[i]], Sid[DSid[j]]]
+      }
+    }
+    DMY_inv <- 1 / DMY
+    DMY_inv[which(DMY_inv == Inf)] <- 0
+    out <- DMY_inv
+  }
+
+  out
+}
+
+
+
+##############################################################################
+#
+# inits_fun
+#
+# prepares the initial values for a model
+#
+# Inputs: the model number
+
+
+inits_fun <- function(model){
+  rngs <- c("base::Wichmann-Hill", "base::Marsaglia-Multicarry",
+            "base::Super-Duper", "base::Mersenne-Twister")
+  out <- function(chain = chain){NULL}
+  if (model == 1){
+    out <- function(chain = chain){
+             list(.RNG.name = sample(rngs, 1),
+                  .RNG.seed = sample(1:1e+06, 1),
+                  beta = rnorm(1, -0.122, 0.8))
+           }
+  }
+  if (model == 2){
+    out <- function(chain = chain){
+             list(.RNG.name = sample(rngs, 1),
+                  .RNG.seed = sample(1:1e+06, 1),
+                  beta = rnorm(1, -0.122, 0.8),
+                  tau_ldelta = rgamma(1, shape = 1.2, rate = 0.7))
+           }
+  }
+  if (model == 3){
+    out <- function(chain = chain){
+             list(.RNG.name = sample(rngs, 1),
+                  .RNG.seed = sample(1:1e+06, 1),
+                  beta = c(rnorm(1, -0.122, 0.8), rnorm(data$NX - 1, 0, 2)),
+                  tau_ldelta = rgamma(1, shape = 1.2, rate = 0.7))
+           }
+  }
+  if (model == 4){
+    out <- function(chain = chain){
+             list(.RNG.name = sample(rngs, 1),
+                  .RNG.seed = sample(1:1e+06, 1),
+                  beta = c(rnorm(1, -0.122, 0.8), rnorm(data$NX - 1, 0, 2)),
+                  tau_ldelta = rgamma(1, shape = 1.2, rate = 0.7),
+                  chi = rgamma(1, shape = 1, rate = 10))
+           }
+  }
+  if (model == 5){
+    out <- function(chain = chain){
+             list(.RNG.name = sample(rngs, 1),
+                  .RNG.seed = sample(1:1e+06, 1),
+                  beta = c(rnorm(1, -0.122, 0.8), rnorm(data$NX - 1, 0, 2)),
+                  tau_ldelta = rgamma(1, shape = 1.2, rate = 0.7),
+                  chi = rnorm(1, 0, 0.5),
+                  tau_lzeta = rgamma(1, shape = 1.2, rate = 0.7))
+           }
+  }
+  if (model == 6){
+    out <- function(chain = chain){
+             list(.RNG.name = sample(rngs, 1),
+                  .RNG.seed = sample(1:1e+06, 1),
+                  beta = c(rnorm(1, -0.122, 0.8), rnorm(data$NX - 1, 0, 2)),
+                  tau_ldelta = rgamma(1, shape = 1.2, rate = 0.7),
+                  chi = rnorm(1, 0, 0.5),
+                  tau_lzeta = rgamma(1, shape = 1.2, rate = 0.7),
+                  phi = rgamma(1, shape = 1, rate = 10),
+                  tau_leta = rgamma(1, shape = 1.2, rate = 0.7))
+           }
+  }
+  if (model == 7){
+    out <- function(chain = chain){
+             list(.RNG.name = sample(rngs, 1),
+                  .RNG.seed = sample(1:1e+06, 1),
+                  beta = c(rnorm(1, -0.122, 0.8), rnorm(data$NX - 1, 0, 2)),
+                  tau_ldelta = rgamma(1, shape = 1.2, rate = 0.7),
+                  chi = rnorm(1, 0, 0.5),
+                  tau_lzeta = rgamma(1, shape = 1.2, rate = 0.7),
+                  lambda = runif(1, 0.3, 0.7),
+                  tau_lgamma = rgamma(1, shape = 1.2, rate = 0.7))
+           }
+  }
+  if (model == 8){
+    out <- function(chain = chain){
+             list(.RNG.name = sample(rngs, 1),
+                  .RNG.seed = sample(1:1e+06, 1),
+                  beta = c(rnorm(1, -0.122, 0.8), rnorm(data$NX - 1, 0, 2)),
+                  tau_ldelta = rgamma(1, shape = 1.2, rate = 0.7),
+                  chi = rnorm(1, 0, 0.5),
+                  tau_lzeta = rgamma(1, shape = 1.2, rate = 0.7),
+                  phi = rgamma(1, shape = 1, rate = 10),
+                  tau_leta = rgamma(1, shape = 1.2, rate = 0.7),
+                  lambda = runif(1, 0.3, 0.7),
+                  tau_lgamma = rgamma(1, shape = 1.2, rate = 0.7))
+           }
+  }
+  if (model == 9){
+    out <- function(chain = chain){
+             list(.RNG.name = sample(rngs, 1),
+                  .RNG.seed = sample(1:1e+06, 1),
+                  beta = c(rnorm(1, -0.122, 0.8), rnorm(data$NX - 1, 0, 2)),
+                  tau_ldelta = rgamma(1, shape = 1.2, rate = 0.7),
+                  chi = rnorm(1, 0, 0.5),
+                  tau_lzeta = rgamma(1, shape = 1.2, rate = 0.7),
+                  phi = rgamma(1, shape = 1, rate = 10),
+                  lambda = runif(1, 0.3, 0.7),
+                  tau_lkappa = rgamma(1, shape = 1.2, rate = 0.7))
+           }
+  }
+
+  out
+}
+
+
+run_mod <- function(model, data, mcmc = c(8, 1000, 1000, 5000, 1), 
+                    keep = FALSE){
+
+  n.chains <- mcmc[1]
+  adapt <- mcmc[2]
+  burnin <- mcmc[3]
+  sample <- mcmc[4]
+  thin <- mcmc[5]
+  modelfile <- paste0("models/model", model, ".R")
+  
+  monitor <- NULL
+  if (model == 1){
+    monitor <- c("beta")
+  } else if (model == 2){
+    monitor <- c("beta", "tau_ldelta", "sigma_ldelta")
+  } else if (model == 3){
+    monitor <- c("beta", "tau_ldelta", "sigma_ldelta")
+  } else if (model == 4){
+    monitor <- c("beta", "tau_ldelta", "sigma_ldelta", "chi")
+  } else if (model == 5){
+    monitor <- c("beta", "tau_ldelta", "sigma_ldelta", 
+                 "chi", "tau_lzeta", "sigma_lzeta")
+  } else if (model == 6){
+    monitor <- c("beta", "tau_ldelta", "sigma_ldelta", 
+                 "chi", "tau_lzeta", "sigma_lzeta",
+                 "phi", "tau_leta", "sigma_leta")
+  } else if (model == 7){
+    monitor <- c("beta", "tau_ldelta", "sigma_ldelta", 
+                 "chi", "tau_lzeta", "sigma_lzeta",
+                 "lambda", "tau_lgamma", "sigma_lgamma")
+  } else if (model == 8){
+    monitor <- c("beta", "tau_ldelta", "sigma_ldelta", 
+                 "chi", "tau_lzeta", "sigma_lzeta",
+                 "phi", "tau_leta", "sigma_leta",
+                 "lambda", "tau_lgamma", "sigma_lgamma")
+  } else if (model == 9){
+    monitor <- c("beta", "tau_ldelta", "sigma_ldelta", 
+                 "chi", "tau_lzeta", "sigma_lzeta",
+                 "phi", "lambda", "tau_lkappa", "sigma_lkappa")
+  }
+  keeploc <- keep
+  if(keep){
+    keeploc <- paste0("output/model_output/model", model)
+  }
+
+  mod <- run.jags(model = modelfile, modules = "glm", monitor = monitor,
+           inits = inits_fun(model), data = data, n.chains = n.chains,
+           adapt = adapt, burnin = burnin, sample = sample, thin = thin,
+           summarise = FALSE, plots = FALSE, method = "parallel",
+           keep.jags.files = keeploc)
+  mcmcname <- paste0("output/model_output/model", model, "_mcmc.RData") 
+  mcmc <- mod$mcmc
+  save(mcmc, file = mcmcname)
+  mod
+}
+
+
+extend_mod <- function(model, newname, mcmc = c(0, 0, 5000)){
+
+  adapt <- mcmc[1]
+  burnin <- mcmc[2]
+  sample <- mcmc[3]
+
+  if("runjags" %in% class(model)){ 
+    jagsobj <- model
+    keeploc <- paste0("output/model_output/model", newname)
+  }else{
+    modelfile <- paste0("output/model_output/model", model)
+    jagsobj <- results.jags(modelfile)
+    keeploc <- paste0("output/model_output/model", newname)
+  }
+
+  extend.jags(jagsobj, adapt = adapt, burnin = burnin, sample = sample, 
+           summarise = FALSE, plots = FALSE, method = "parallel",
+           keep.jags.files = keeploc)
+}
+
+
+combine_mod_chains <- function(model, thinfreq = 1, burnin = 0, 
+                               model1 = NULL, model2 = NULL){
+
+  if(is.null(model1)){
+    mod_mcmc_loc <- paste0("output/model_output/model", model, "_mcmc.RData")  
+    load(mod_mcmc_loc)
+    mod_mcmc <- mcmc
+  } else{
+    if(is.null(model2)){
+      mod_out_loc <- paste0("output/model_output/model", model)  
+      mod_in <- results.jags(mod_out_loc, summarise = TRUE)
+    } else {
+      fn <- paste0("output/model_output/model", model, "_", model2, ".RData")  
+      load(fn)
+      on <- paste0("m", model, "_", model2)
+      mod_in <- eval(parse(text=on))
+    }
+    mod_mcmc <- as.mcmc.list(mod_in)
+  }
+  nchains <- length(mod_mcmc)
+  init1 <- 1 + burnin
+  niter <- nrow(mod_mcmc[[1]]) - burnin
+  niterthin <- floor(niter / thinfreq)
+  nparam <- ncol(mod_mcmc[[1]])
+  totiter <- nchains * niterthin
+  out <- matrix(NA, totiter, nparam)
+
+
+  thins <- seq(init1, nrow(mod_mcmc[[1]]), by = thinfreq)
+
+  for(i in 1:nchains){
+    chain_rows <- ((i - 1) * niterthin + 1):(i * niterthin)
+    out[chain_rows, ] <- mod_mcmc[[i]][thins, ]
+  }
+  out
+}
+
+
+eval_mod <- function(model, data, DMY_inv = NULL, nsamps = 1000, 
+                     thinfreq = 1, nsamps_MI = 500,
+                     burnin = 0, model1 = NULL, model2 = NULL){
+
+  m_mcmc <- combine_mod_chains(model, thinfreq, burnin, model1, model2)
+  niter <- nrow(m_mcmc)
+  nobs <- length(data$Y)
+  post_pred_Y <- matrix(NA, nsamps, nobs)
+  post_pred_D <- matrix(NA, nsamps, nobs)
+  samps <- sample(1:niter, nsamps)
+  for(i in 1:nsamps){
+    post_pred_Y[i, ] <- pps(model, data, m_mcmc[samps[i], ])
+    post_pred_D[i, ] <- post_pred_Y[i, ] / data$V
+  }
+  post_mean_D <- apply(post_pred_D, 1, mean)
+  post_var_D <- apply(post_pred_D, 1, var)
+  post_fr0_Y <- apply(post_pred_Y, 1, fr0)
+  post_mn0_Y <- apply(post_pred_Y, 1, mn0)
+  post_chi2 <- chi2(post_pred_Y, data, m_mcmc, model)
+  post_FT <- FT(post_pred_Y, data, m_mcmc, model)
+  if (is.null(DMY_inv)){
+    post_MI <- NULL
+  } else {
+    post_MI <- MI(data, DMY_inv, m_mcmc, model, nsamps_MI)
+  }
+
+  post <-   list(post_pred_Y = post_pred_Y, post_pred_D = post_pred_D, 
+                 post_mean_D = post_mean_D, post_var_D = post_var_D, 
+                 post_fr0_Y = post_fr0_Y, post_mn0_Y = post_mn0_Y,
+                 post_chi2 = post_chi2, post_FT = post_FT, post_MI = post_MI)
+  fn <- paste0("output/model_output/model", model, "_postpred.RData")  
+  save(post, file = fn)
+  post
+}
+
+
+MI <- function(data, DMY_inv, m_mcmc, model, nsamps_MI){
+
+  niter <- nrow(m_mcmc)
+  samps <- sample(1:niter, nsamps_MI)
+  MI_o <- rep(NA, nsamps_MI)
+  MI_e <- rep(NA, nsamps_MI)
+  MI_sd <- rep(NA, nsamps_MI)
+  MI_p <- rep(NA, nsamps_MI)
+
+  for(i in 1:nsamps_MI){
+    Yobs <- data$Y
+    Yexp <- mod_expected_Y(model, data, m_mcmc[i, ])
+
+    MI <- Moran.I(data$Y - Yexp, DMY_inv)
+    MI_o[i] <- MI$observed 
+    MI_e[i] <- MI$expected 
+    MI_sd[i] <- MI$sd 
+    MI_p[i] <- MI$p.value
+  }
+  p_omni <- length(MI_o[MI_o<MI_e]) / nsamps_MI
+  list(p_omni = p_omni, MI_o = MI_o, MI_e = MI_e, MI_sd = MI_sd, MI_p = MI_p)
+}
+
+
+
+
+chi2 <- function(pred_Y, data, m_mcmc, model){
+
+  npreds <- nrow(pred_Y)
+  chi2_o <- rep(NA, npreds)
+  chi2_p <- rep(NA, npreds)
+
+  for(i in 1:npreds){
+    Yobs <- data$Y
+    Ypred <- pred_Y[i, ]
+    Yexp <- mod_expected_Y(model, data, m_mcmc[i, ])
+    chi2_o[i] <- sum((Yobs - Yexp)^2 / Yexp)
+    chi2_p[i] <- sum((Ypred - Yexp)^2 / Yexp)
+  }
+  p_omni <- sum(chi2_o < chi2_p) / npreds
+  list(p_omni = p_omni, chi2_o = chi2_o, chi2_p = chi2_p)
+}
+
+FT <- function(pred_Y, data, m_mcmc, model){
+
+  npreds <- nrow(pred_Y)
+  FT_o <- rep(NA, npreds)
+  FT_p <- rep(NA, npreds)
+
+  for(i in 1:npreds){
+    Yobs <- data$Y
+    Ypred <- pred_Y[i, ]
+    Yexp <- mod_expected_Y(model, data, m_mcmc[i, ])
+    FT_o[i] <- sum((sqrt(Yobs) - sqrt(Yexp))^2)
+    FT_p[i] <- sum((sqrt(Ypred) - sqrt(Yexp))^2)
+  }
+  p_omni <- sum(FT_o < FT_p) / npreds
+  list(p_omni = p_omni, FT_o = FT_o, FT_p = FT_p)
+}
+
+
+
+mod_expected_Y <- function(model, data, m_mcmc_i){
+  NS <- data$NS
+  SO <- data$SO
+  MSPY <- data$MSPY
+  MSSPY <- data$MSSPY
+  week <- data$week
+  NT <- data$NT
+  NDS <- data$NDS
+  DSid <- data$DSid
+  NS <- data$NS
+  DM <- data$DM
+  NYr <- data$NYr
+  Yrid <- data$Yrid
+  Sid <- data$Sid
+  SSid <- data$SSid
+  out <- NULL
+  zeta <- 1
+  rho <- 1
+  if (model == 1){
+    delta <- exp(m_mcmc_i)
+  } else if (model == 2){
+    DS_ldelta <- rnorm(NDS, m_mcmc_i[1], m_mcmc_i[3])
+    ldelta <- DS_ldelta[DSid]
+    delta <- exp(ldelta)
+  } else if (model == 3){
+    muDS_ldelta <- data$X %*% m_mcmc_i[1:13]
+    DS_ldelta <- rnorm(NDS, muDS_ldelta, m_mcmc_i[15])
+    ldelta <- DS_ldelta[DSid]
+    delta <- exp(ldelta)
+  } else if (model == 4){
+    muDS_ldelta <- data$X %*% m_mcmc_i[1:13]
+    DS_ldelta <- rnorm(NDS, muDS_ldelta, m_mcmc_i[15]) 
+    ldelta <- DS_ldelta[DSid]
+    delta <- exp(ldelta)
+    lzeta <- -m_mcmc_i[16] * data$W
+    zeta <- exp(lzeta)
+  } else if (model == 5){
+    muDS_ldelta <- data$X %*% m_mcmc_i[1:13]
+    DS_ldelta <- rnorm(NDS, muDS_ldelta, m_mcmc_i[15]) 
+    ldelta <- DS_ldelta[DSid]
+    delta <- exp(ldelta)
+    muT_lzeta <- m_mcmc_i[16] * data$W
+    lzeta <- rnorm(NT, muT_lzeta, m_mcmc_i[18]) * data$W
+    zeta <- exp(lzeta)
+  } else if (model == 6){
+    muDS_ldelta <- data$X %*% m_mcmc_i[1:13]
+    SIGMA_leta <- matrix(NA, NS, NS)
+    for(i in 1:NS){
+      for(j in 1:NS){
+        SIGMA_leta[i, j] <- (1 / m_mcmc_i[20]) * exp(-m_mcmc_i[19] * DM[i, j])
+      } 
+    }
+    letaS <- matrix(NA, NS, NYr)
+    for(i in 1:NYr){
+      letaS[, i] <- rmvnorm(1, rep(0, NS), SIGMA_leta, method = "svd")
+    }
+    DS_leta <- rep(NA, NDS)
+    for(i in 1:NDS){
+      DS_leta[i] <- letaS[Sid[i], Yrid[i]]
+    }    
+    DS_ldelta <- rnorm(NDS, muDS_ldelta + DS_leta, m_mcmc_i[15]) 
+    ldelta <- DS_ldelta[DSid]
+    delta <- exp(ldelta)
+    muT_lzeta <- m_mcmc_i[16] * data$W
+    lzeta <- rnorm(NT, muT_lzeta, m_mcmc_i[18]) * data$W
+    zeta <- exp(lzeta)
+  }else if (model == 7){
+    muDS_ldelta <- data$X %*% m_mcmc_i[1:13]
+    SIGMA_lgamma <- array(NA, dim = c(MSPY, MSPY, NYr))    
+    lgammaS <- matrix(NA, MSPY, NYr)
+    for(i in 1:NYr){
+      for(j in 1:MSPY){
+        for(k in 1:MSPY){
+          tdiff <- abs(week[i, k] - week[i, j])
+          SIGMA_lgamma[j, k, i] <- (1/m_mcmc_i[20]) * m_mcmc_i[19] ^ tdiff
+        }
+      }
+      lgammaS[, i] <- rmvnorm(1, rep(0, MSPY), SIGMA_lgamma[ , , i], 
+                              method = "svd")
+    }
+    DS_lgamma <- rep(NA, NDS)
+    for(i in 1:NDS){
+      DS_lgamma[i] <- lgammaS[SO[i], Yrid[i]]
+    }
+
+    DS_ldelta <- rnorm(NDS, muDS_ldelta + DS_lgamma, m_mcmc_i[15]) 
+    ldelta <- DS_ldelta[DSid]
+    delta <- exp(ldelta)
+    muT_lzeta <- m_mcmc_i[16] * data$W
+    lzeta <- rnorm(NT, muT_lzeta, m_mcmc_i[18]) * data$W
+    zeta <- exp(lzeta)
+  } else if (model == 8){
+    muDS_ldelta <- data$X %*% m_mcmc_i[1:13]
+    SIGMA_lgamma <- array(NA, dim = c(MSPY, MSPY, NYr))    
+    lgammaS <- matrix(NA, MSPY, NYr)
+    for(i in 1:NYr){
+      for(j in 1:MSPY){
+        for(k in 1:MSPY){
+          tdiff <- abs(week[i, k] - week[i, j])
+          SIGMA_lgamma[j, k, i] <- (1/m_mcmc_i[23]) * m_mcmc_i[22] ^ tdiff
+        }
+      }
+      lgammaS[, i] <- rmvnorm(1, rep(0, MSPY), SIGMA_lgamma[ , , i], 
+                              method = "svd")
+    }
+    DS_lgamma <- rep(NA, NDS)
+    for(i in 1:NDS){
+      DS_lgamma[i] <- lgammaS[SO[i], Yrid[i]]
+    }
+    SIGMA_leta <- matrix(NA, NS, NS)
+    for(i in 1:NS){
+      for(j in 1:NS){
+        SIGMA_leta[i, j] <- (1 / m_mcmc_i[20]) * exp(-m_mcmc_i[19] * DM[i, j])
+      } 
+    }
+    letaS <- matrix(NA, NS, NYr)
+    for(i in 1:NYr){
+      letaS[, i] <- rmvnorm(1, rep(0, NS), SIGMA_leta, method = "svd")
+    }
+    DS_leta <- rep(NA, NDS)
+    for(i in 1:NDS){
+      DS_leta[i] <- letaS[Sid[i], Yrid[i]]
+    }   
+    DS_ldelta <- rnorm(NDS, muDS_ldelta + DS_lgamma + DS_leta, m_mcmc_i[15]) 
+    ldelta <- DS_ldelta[DSid]
+    delta <- exp(ldelta)
+    muT_lzeta <- m_mcmc_i[16] * data$W
+    lzeta <- rnorm(NT, muT_lzeta, m_mcmc_i[18]) * data$W
+    zeta <- exp(lzeta)
+  } else if (model == 9){
+    muDS_ldelta <- data$X %*% m_mcmc_i[1:13]
+    SIGMA_lkappa <- array(NA, dim = c(MSSPY, MSSPY, NYr))    
+    lkappaS <- matrix(NA, MSSPY, NYr)
+
+    for(i in 1:NYr){
+      for(j in 1:MSPY){
+        for(k in 1:NS){
+          for(l in 1:MSPY){
+            for(m in 1:NS){
+              tdiff <- abs(week[i, l] - week[i, j])
+              SIGMA_lkappa[(j - 1) * NS + k, (l - 1) * NS + m, i] <- 
+                   (1 /m_mcmc_i[21]) * 
+                   m_mcmc_i[20] ^ tdiff * 
+                   exp(-m_mcmc_i[19] * DM[k, m])
+            }
+          } 
+        }
+      }
+      lkappaS[, i] <- rmvnorm(1, rep(0, MSSPY), SIGMA_lkappa[ , , i], 
+                              method = "svd")
+    }
+
+    DS_lkappa <- rep(NA, NDS)
+    for(i in 1:NDS){
+      DS_lkappa[i] <- lkappaS[SSid[i], Yrid[i]]
+    } 
+    DS_ldelta <- rnorm(NDS, muDS_ldelta + DS_lkappa, m_mcmc_i[15]) 
+    ldelta <- DS_ldelta[DSid]
+    delta <- exp(ldelta)
+    muT_lzeta <- m_mcmc_i[16] * data$W
+    lzeta <- rnorm(NT, muT_lzeta, m_mcmc_i[18]) * data$W
+    zeta <- exp(lzeta)
+  }
+
+
+  out <- data$V * delta * zeta * rho
+  return(out)
+}
+
+
+pps <- function(model, data, m_mcmc_i){
+ dens <- mod_expected_Y(model, data, m_mcmc_i)
+ dens[dens > 1e9] <- 1e9 #excessively bad values can cause overflow of rpois
+ rpois(length(data$Y), dens)
+}
+
+obs_pred_cor <- function(data, model){
+  pp <- paste0("output/model_output/model", model, "_postpred.RData")  
+  load(pp)
+  predY <- post$post_pred_Y
+  obsY <- log(data$Y + 0.1)
+  predY <- (apply(log(predY + 0.1), 2, mean)) 
+  cor(obsY, predY)
+}
+
+r2 <- function(data, model){
+  pp <- paste0("output/model_output/model", model, "_postpred.RData")  
+  load(pp)
+
+  obsY <- log(data$Y + 0.1)
+  predY <- post$post_pred_Y
+  predY <- (apply(log(predY + 0.1), 2, mean)) 
+
+  r2y <- 1 - var(obsY - predY)/ var(obsY)
+
+
+  obsD <- log(data$Y + 0.1)/data$V
+  predD <- post$post_pred_Y
+  predD <- (apply(log(predD + 0.1), 2, mean)) 
+  predD <- predD/data$V
+  DSid <- data$DSid
+
+  nd <- data$NDS
+  obsD2 <- rep(NA, nd)
+  predD2 <- rep(NA, nd)
+  for(j in 1:nd){
+    obsD2[j] <- mean(obsD[which(DSid == j)])
+    predD2[j] <- mean(predD[which(DSid == j)])
+  }
+
+  r2d <- 1 - var(obsD - predD)/ var(obsD)
+
+  c(y = r2y, d = r2d)
+}
+
+peak_descrips <- function(data, model){
+  mcmc_c <- combine_mod_chains(model)
+  mcmc_c
+
+  X <- data$X
+  FOYsd <- data$msd["FOYsd"]
+  FOYm <- data$msd["FOYm"]
+  YEARsd <- data$msd["YEARsd"]
+  YEARm <- data$msd["YEARm"] 
+  lECavsd <- data$msd["lECavsd"]
+  lECavm <- data$msd["lECavm"]
+  lSEsd <- data$msd["lSEsd"]
+  lSEm <- data$msd["lSEm"]
+  lCALsd <- data$msd["lCALsd"]
+  lCALm <- data$msd["lCALm"]
+  VELsd <- data$msd["VELsd"]
+  VELm <- data$msd["VELm"]
+
+  predictionFROYR <- seq(.18, .61, .001)
+  PredictionFROYRtrans <- (predictionFROYR - FOYm) / FOYsd  
+  peakFOY <- rep(NA, nrow(mcmc_c))
+  for(i in 1:nrow(mcmc_c)){
+
+   yy <- PredictionFROYRtrans * mcmc_c[i,2] + 
+         PredictionFROYRtrans^2 * mcmc_c[i,3]
+   peakFOY[i] <- predictionFROYR[which.max(yy)]
+  }
+  cat("Jday\n")
+  print(round(quantile(peakFOY, c(0.5, 0.025, 0.975))*365))
+
+
+
+  predictionYR <- seq(1, 20, 0.01)
+  PredictionYRtrans <- (predictionYR - YEARm) / YEARsd  
+  peakYR <- rep(NA, nrow(mcmc_c))
+  for(i in 1:nrow(mcmc_c)){
+
+   yy <- PredictionYRtrans * mcmc_c[i,4] + 
+         PredictionYRtrans^2 * mcmc_c[i,5]
+   peakYR[i] <- predictionYR[which.max(yy)]
+  }
+  cat("Year\n")
+  print(round(quantile(peakYR, c(0.5, 0.025, 0.975))))
+
+  predictionlEC <- seq(3.2, 10.4, 0.001)
+  PredictionlECtrans <- (predictionlEC - lECavm) / lECavsd  
+  peaklEC <- rep(NA, nrow(mcmc_c))
+  for(i in 1:nrow(mcmc_c)){
+
+   yy <- PredictionlECtrans * mcmc_c[i,6] + 
+         PredictionlECtrans^2 * mcmc_c[i,7]
+   peaklEC[i] <- predictionlEC[which.max(yy)]
+  }
+  cat("EC\n")
+  print(round(quantile(exp(peaklEC), c(0.5, 0.025, 0.975))))
+
+
+  predictionlsecchi <- seq(1.5, 5.5, 0.001)
+  predictionlsecchitrans <- (predictionlsecchi - lSEm) / lSEsd  
+  peakls <- rep(NA, nrow(mcmc_c))
+  for(i in 1:nrow(mcmc_c)){
+
+   yy <- predictionlsecchitrans * mcmc_c[i,8] + 
+         predictionlsecchitrans^2 * mcmc_c[i,9]
+   peakls[i] <- predictionlsecchi[which.max(yy)]
+  }
+  cat("Secchi\n")
+  print(round(quantile(exp(peakls), c(0.5, 0.025, 0.975))))
+
+
+  predictionlcal <- seq(-2.4, 11.1, 0.01)
+  predictionlcaltrans <- (predictionlcal - lCALm) / lCALsd  
+  peaklc <- rep(NA, nrow(mcmc_c))
+  for(i in 1:nrow(mcmc_c)){
+
+   yy <- predictionlcaltrans * mcmc_c[i,10] + 
+         predictionlcaltrans ^2* mcmc_c[i,11]
+   peaklc[i] <- predictionlcal [which.max(yy)]
+  }
+  cat("Calanoids\n")
+  print(round(quantile(exp(peaklc), c(0.5, 0.025, 0.975))))
+
+
+
+  predictionVel <- seq(-1, 4.6, 0.001)
+  predictionVeltrans <- (predictionVel - VELm) / VELsd 
+  peaklv <- rep(NA, nrow(mcmc_c))
+  for(i in 1:nrow(mcmc_c)){
+
+   yy <- predictionVeltrans * mcmc_c[i,12] + 
+         predictionVeltrans ^2* mcmc_c[i,13]
+   peaklv[i] <- predictionVel[which.max(yy)]
+  }
+  cat("Velocity\n")
+  print(round(quantile((peaklv), c(0.5, 0.025, 0.975)), 3))
+
+}
+
+
+mcmc_table <- function(model){
+  mod_mcmc_loc <- paste0("output/model_output/model", model, "_mcmc.RData")  
+  load(mod_mcmc_loc)
+  mod_mcmc <- mcmc
+
+  ncoef <- ncol(mod_mcmc[[1]])
+  coefnames <- colnames(mod_mcmc[[1]])
+  sumnames <- c("median", "mean", "sd", "ci", "fr0", "mcerr", "mcpersd",
+                "ssef", "ac10", "psrf")
+  nsums <- length(sumnames)
+  out <- data.frame(matrix(NA, ncoef, nsums))
+  rownames(out) <- coefnames
+  colnames(out) <- sumnames
+  for(i in 1:ncoef){
+    out[i,] <- coefsum(mod_mcmc, i)
+  }
+  tname <- paste0("output/model_output/model", model, "table.csv")
+  write.csv(out, tname)
+  out
+}
+
+coefsum <- function(mod_mcmc, i){
+  sumnames <- c("median", "mean", "sd", "ci", "fr0", "mcerr", "mcpersd",
+                "ssef", "ac10", "psrf")
+  nchains <- length(mod_mcmc)
+  itpchain <- nrow(mod_mcmc[[1]])
+  mod_mcmc_i <- matrix(NA, ncol = nchains, nrow = itpchain)
+  for(j in 1:nchains){
+    mod_mcmc_i[,j] <- mod_mcmc[[j]][,i]
+  }
+  stde <- summary(mod_mcmc)$statistics[i,2]
+  out_i <- c(round(median(mod_mcmc_i), 4),
+             round(mean(mod_mcmc_i), 4),
+             round(sd(mod_mcmc_i), 4),
+             paste(round(quantile(mod_mcmc_i, c(0.025, 0.975)), 4),
+                   collapse = " - "),
+             round(length(which(mod_mcmc_i > 0)) / length(mod_mcmc_i), 3),
+             round(stde / sqrt(effectiveSize(mod_mcmc)[i]), 4),
+             round(
+             (stde / sqrt(effectiveSize(mod_mcmc)[i])) / sd(mod_mcmc_i) * 100, 
+             1),
+             round(effectiveSize(mod_mcmc)[i], 0),
+             round(autocorr.diag(mod_mcmc, lags = 10)[i], 2),
+             round(gelman.diag(mod_mcmc)[[1]][i,1], 2))
+  names(out_i) <- sumnames
+  out_i
+}
+
+
+summaryTows <- function(Y, V, DSid, TO, W){
+  NDS <- max(DSid)
+  denmat <- matrix(NA, NDS, 3)
+  catchmat <- matrix(NA, NDS, 3)
+  velmat <- matrix(NA, NDS, 3)
+  for(i in 1:NDS){
+    specs <- which(DSid == i)
+    for(j in 1:length(specs)){
+      denmat[i, TO[specs[j]]] <- Y[specs[j]] / V[specs[j]]
+      catchmat[i, TO[specs[j]]] <- Y[specs[j]] 
+      velmat[i, TO[specs[j]]] <- W[specs[j]] 
+    }
+  }
+
+  diffmat <- denmat
+  diffmat[,2] <- denmat[,2] - denmat[,1]
+  diffmat[,3] <- denmat[,3] - denmat[,2]
+  diffmat <- na.omit(diffmat)
+  diffmat <- diffmat[-which(diffmat[,2] == 0 & diffmat[,3] == 0), ]
+  towdiffs <- data.frame(cbind(
+                               mean = apply(diffmat, 2, mean),
+                               var = apply(diffmat, 2, var),
+                               min = apply(diffmat, 2, min),
+                               max = apply(diffmat, 2, max)))
+  towdiffs <- towdiffs[-1, ]
+  rownames(towdiffs) <- c("1-2", "2-3")
+
+  corrs <- round(cor(denmat, use = "pairwise.complete.obs") , 3)
+  completions <- table(3 - apply(is.na(denmat), 1, sum))
+  completions <- rbind(completions, round(completions / NDS, 3))
+  catches <- table(apply(na.omit(catchmat) != 0, 1, sum))
+  catches <- rbind(catches, round(catches / nrow(na.omit(catchmat)), 3))
+  list("correlations among tows" = corrs, "completed tows" = completions, 
+       "tows with catches" = catches, 
+       "differences from previous tow" = towdiffs)
+}
+
+summaryD <- function(Y, V){
+  round(
+    c(mean = mean(Y/V), median = median(Y/V), var = var(Y/V),
+      min = min(Y/V), max = max(Y/V)),
+    3)
+}
+
+summaryV <- function(V){
+  round(
+    c(mean = mean(V), median = median(V), var = var(V), min = min(V),
+      max = max(V), 
+      prop_0.75_1.25 = length(V[V > 0.75 & V <= 1.25]) / length(V)),
+    4)
+}
+
+
+
+summaryY <- function(Y){
+  round(
+    c(mean = mean(Y), median = median(Y), var = var(Y), 
+      min = min(Y), max = max(Y), prop0 = fr0(Y), median_non0 = mn0(Y)),
+    3)
+  
+}
+
+
+
+mn0 <- function(x, ...){
+  nz <- x[x!=0]
+  mnz <- median(nz)
+  return(mnz)
+}
+
+
+fr0 <- function(x, ...){
+  fr <- length(x[x==0])/length(x)
+  return(fr)
+}
