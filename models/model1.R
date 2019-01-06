@@ -8,7 +8,7 @@ model {
 
 # priors
 
-  beta ~ dnorm(-0.122, 1/(10^2))
+  beta ~ dnorm(-0.122, 1/(4^2))
 
 # process model
 

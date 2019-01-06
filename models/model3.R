@@ -8,11 +8,11 @@ model {
 
 # priors
 
-  beta[1] ~ dnorm(-0.122, 1/(10^2))
+  beta[1] ~ dnorm(-0.122, 1/(4^2))
   for(i in 2:NX){
     beta[i] ~ dnorm(0, 1/(2.5^2))
   }
-  tau_ldelta ~ dgamma(0.01, 0.01)
+  tau_ldelta ~ dgamma(0.001, 0.001)
   sigma_ldelta <- sqrt(1 / tau_ldelta)
 
 # process model

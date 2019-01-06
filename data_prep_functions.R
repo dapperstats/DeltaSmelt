@@ -36,9 +36,10 @@
 # SSid: within year survey-station identifier for a visit
 # Z: tow covariates [16587 x 4]
 # NCT: number of tow covariates [1]: 4
+# msd: means and sds of pre-transformed variables
+# outflow: outflow_p table
 
-
-prepare_data <- function(mm20_p, spatial_p, vel_p, model){
+prepare_data <- function(mm20_p, spatial_p, vel_p, model, outflow_p = NULL){
 
 # tow-level data
 
@@ -163,6 +164,12 @@ prepare_data <- function(mm20_p, spatial_p, vel_p, model){
   X <- as.matrix(X) 
   NX <- ncol(X)
 
+# means and sds of variables
+
+  msd <- c(FOYsd = FOYsd, FOYm = FOYm, YEARsd = YEARsd, YEARm = YEARm, 
+           lECavsd = lECavsd, lECavm = lECavm, lSEsd = lSEsd, lSEm = lSEm,
+           lCALsd = lCALsd, lCALm = lCALm, VELsd = VELsd, VELm = VELm)
+
 # prep tow covariate table
 
   # instantaneous velocity
@@ -189,10 +196,10 @@ prepare_data <- function(mm20_p, spatial_p, vel_p, model){
   Z <- as.matrix(Z) 
   NZ <- ncol(Z)
 
-# Just absolute instantaneous velocity 
+# instantaneous velocity: made absolute and scaled to [0-1]
 
   W <- abs(tows20mmRNAomit$InstVel)
-
+  W <- W / max(W)
 
 # Observations
   
@@ -239,9 +246,29 @@ prepare_data <- function(mm20_p, spatial_p, vel_p, model){
   NYr <- length(UYr)
 
 # survey number within the year and max number of surveys in a year
+#   survey number isn't necessarily in order and they skip, so create own
+#   WYSurvey based on the first week of each
 
-  SO <- visits20mmRNAomit$SurveyNumber
-  MSPY <- max(visits20mmRNAomit$SurveyNumber)
+  visits20mmRNAomit$WYSurvey <- NA
+
+  for(i in 1:NYr){
+
+    SNV <- visits20mmRNAomit$SurveyNumber[Yrid == UYr[i]]
+    weekses <- visits20mmRNAomit$Week[Yrid == UYr[i]]
+    SNV2 <- rep(NA, length(SNV))
+    weekses2 <- rep(NA, length(weekses))
+    for(j in 1:length(weekses2)){
+      weekses2[j] <- min(weekses[SNV == SNV[j]])
+    }
+    uweekses2 <- unique(sort(weekses2))
+    for(j in 1:length(weekses2)){
+      SNV2[j] <- which(uweekses2 == weekses2[j])
+    }
+    visits20mmRNAomit$WYSurvey[Yrid == UYr[i]] <- SNV2
+  }
+
+  SO <- visits20mmRNAomit$WYSurvey
+  MSPY <- max(visits20mmRNAomit$WYSurvey)
 
 # week of each survey for each year
 #   using the most common week for the surveys that span a week break
@@ -252,7 +279,7 @@ prepare_data <- function(mm20_p, spatial_p, vel_p, model){
   week <- matrix(NA, nrow = NYr, ncol = MSPY)
   for(i in 1:NYr){
     for(j in 1:MSPY){
-      matched <- Yrid == UYr[i] & visits20mmRNAomit$SurveyNumber == j
+      matched <- Yrid == UYr[i] & visits20mmRNAomit$WYSurvey == j
       wk <- visits20mmRNAomit$Week[matched]
       if (length(wk) == 0){
         week[i, j] <- week[i, j - 1] + 1
@@ -261,7 +288,6 @@ prepare_data <- function(mm20_p, spatial_p, vel_p, model){
       }
     }
   }
-
 
 # station-survey index for each visit and max number of stations-survey per 
 #   year
@@ -296,13 +322,61 @@ prepare_data <- function(mm20_p, spatial_p, vel_p, model){
     out <- list(Y = Y, V = V, NT = NT, X = X, NX = NX, DSid = DSid, NDS = NDS)
   }
 
+  # model4 adds in tow-level impact of instantaneous velocity with a 
+  #  deterministic forced negative exponential
+
+  if (model == 4){
+    out <- list(Y = Y, V = V, NT = NT, X = X, NX = NX, DSid = DSid, NDS = NDS,
+                W = W)
+  }
+
+  # model5 adds in tow-level impact of instantaneous velocity with a 
+  #  exponential that is not forced negative and is noisy 
+
+  if (model == 5){
+    out <- list(Y = Y, V = V, NT = NT, X = X, NX = NX, DSid = DSid, NDS = NDS,
+                W = W)
+  }
+
+  # model6 adds spatial autocorrelation to model 5
+
+  if (model == 6){
+    out <- list(Y = Y, V = V, NT = NT, X = X, NX = NX, DSid = DSid, NDS = NDS,
+                W = W, DM = DM, Sid = Sid, NS = NS, Yrid = Yrid, NYr = NYr)
+  }
+
+  # model7 adds temporal autocorrelation to model 5
+
+  if (model == 7){
+    out <- list(Y = Y, V = V, NT = NT, X = X, NX = NX, DSid = DSid, NDS = NDS,
+                W = W, week = week, MSPY = MSPY, SO = SO, 
+                Yrid = Yrid, NYr = NYr)
+  }
+
+  # model8 adds spatial and temporal autocorrelation to model 5
+
+  if (model == 8){
+    out <- list(Y = Y, V = V, NT = NT, X = X, NX = NX, DSid = DSid, NDS = NDS,
+                W = W, week = week, MSPY = MSPY, SO = SO, 
+                DM = DM, Sid = Sid, NS = NS, Yrid = Yrid, NYr = NYr)
+  }
+
+  # model9 adds spatioemporal autocorrelation to model 5
+
+  if (model == 9){
+    out <- list(Y = Y, V = V, NT = NT, X = X, NX = NX, DSid = DSid, NDS = NDS,
+                W = W, week = week, MSPY = MSPY, NS = NS, MSSPY = MSSPY,
+                DM = DM, SSid = SSid, Yrid = Yrid, NYr = NYr)
+  }
+
   # everything that could be used
 
   if (model == "all"){
     out <- list(Y = Y, V = V, NT = NT, X = X, NX = NX, DSid = DSid, NDS = NDS,
                 DM = DM, Sid = Sid, NS = NS, Yrid = Yrid, NYr = NYr,
                 week = week, MSPY = MSPY, SO = SO, TO = TO, W = W,
-                MSSPY = MSSPY, SSid = SSid, Z = Z, NZ = NZ)
+                MSSPY = MSSPY, SSid = SSid, Z = Z, NZ = NZ, msd = msd,
+                outflow = outflow_p)
   }
 
   # just the distance matrix among Y samples

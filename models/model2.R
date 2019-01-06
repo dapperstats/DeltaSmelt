@@ -8,8 +8,8 @@ model {
 
 # priors
 
-  beta ~ dnorm(-0.122, 1/(10^2))
-  tau_ldelta ~ dgamma(0.01, 0.01)
+  beta ~ dnorm(-0.122, 1/(4^2))
+  tau_ldelta ~ dgamma(0.001, 0.001)
   sigma_ldelta <- sqrt(1 / tau_ldelta)
 
 # process model
