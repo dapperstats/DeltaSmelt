@@ -1,4 +1,10 @@
-ppc_fig <- function(data, model){
+mo95 <- function(x){
+  x95u <- quantile(x, 0.975)
+  mean(x[x>x95u])
+}
+
+
+ppc_fig <- function(data, model, MI_obs){
 
   pp <- paste0("output/model_output/model", model, "_postpred.RData")  
   load(pp)
@@ -15,11 +21,13 @@ ppc_fig <- function(data, model){
 
   obsDbyY <- Y / V
 
-  meanpredicts <- apply(predDbyY, 1, mean)
-  varpredicts <- apply(predDbyY, 1, var)
+  meanpredicts <- apply(predictsY_thinned, 1, mean)
+  varpredicts <- apply(predictsY_thinned, 1, var)
   fr0predicts <- apply(predictsY_thinned, 1, fr0)
   mn0predicts <- apply(predictsY_thinned, 1, mn0)
- 
+  u95predicts <- apply(predictsY_thinned, 1, quantile, 0.975)
+  MIp <- post$post_MI$MI_o
+
   nrep <- length(meanpredicts)
   predictedfrmatch <- rep(NA, nrep)
 
@@ -29,23 +37,27 @@ ppc_fig <- function(data, model){
     predictedfrmatch[i] <- length(x[x==y])/length(x)
   }
 
-  meanY <- mean(Y/V)
-  varY <- var(Y/V)
+  meanY <- mean(Y)
+  varY <- var(Y)
   fr0Y <- fr0(Y)
   mn0Y <- mn0(Y)
+  u95 <- quantile(Y, 0.975)
 
   lmp <- log(meanpredicts)
   lmY <- log(meanY)
   lvp <- log(varpredicts)
   lvY <- log(varY)
 
+  u95m <- mean(Y[Y>u95])
+  u95mpred <- apply(predictsY_thinned, 1, mo95)
+
 
   # plot
 
-    tiff("output/Fig8.tif", height = 6, width = 6, units = "in",
+    tiff("output/Fig8.tif", height = 6, width = 9, units = "in",
         res = 600, compression = "lzw")
 
-    par(mfrow = c(2, 2))
+    par(mfrow = c(2, 3))
     par(mar = c(2, 4, 2, 1))
 
     # mean
@@ -64,20 +76,19 @@ ppc_fig <- function(data, model){
         rect(x1[i], 0, x2[i], ht[i])
       }
       points(rep(lmY, 2), c(0, 0.145), type = 'l', lwd = 3)
-
+      points(c(-1e4, 1e4), c(0,0), type = "l")
       axis(2, las = 1, labels = F, tck = -0.02, at = seq(0, 0.2, 0.025))
       mtext(side = 2, las = 1, cex = 0.7, at = seq(0, 0.2, 0.05),
             c("0.00", "0.05", "0.1", "0.15", "0.2"), line = 0.5)
       mtext(side = 2, "Frequency", cex = 1., line = 2.5)
       xaxs <- c(0.1, 1.0, 10, 100)
       mtext(side = 1, at = log(xaxs), xaxs, line = -0.5, cex = 0.6)
-      mtext(side = 1, "Mean fish per 1000 m", cex = 0.9, line = 1)
-      mtext(side = 1, "3", cex = 0.7, line = 0.75, at = 4.275)
-      text(x = -1.75, y = 0.14, adj = 0,
+      mtext(side = 1, "Mean fish per tow", cex = 0.9, line = 1)
+      text(x = -1.5, y = 0.15, adj = 0,
            round(length(meanpredicts[meanpredicts < meanY])/
                  length(meanpredicts), 3), 
            cex = 0.9)
-      text(-5.75, 0.165, "a", xpd = T, cex = 1.5)
+      text(-5, 0.165, "a", xpd = T, cex = 1.5)
 
     # variance
 
@@ -94,8 +105,8 @@ ppc_fig <- function(data, model){
       for(i in 1:length(ht)){
         rect(x1[i], 0, x2[i], ht[i])
       }
-      points(rep(lvY, 2), c(0, 0.145), type = 'l', lwd = 3)
-
+      points(rep(lvY, 2), c(0, 0.155), type = 'l', lwd = 3)
+      points(c(-1e4, 1e4), c(0,0), type = "l")
       axis(2, las = 1, labels = F, tck = -0.02, at = seq(0, 0.2, 0.025))
       mtext(side = 2, las = 1, cex = 0.7, at = seq(0, 0.2, 0.05),
             c("0.00", "0.05", "0.1", "0.15", "0.2"), line = 0.5)
@@ -103,13 +114,12 @@ ppc_fig <- function(data, model){
       xaxs <- 10^(0:7)
       xaxst <- c("1", "10", "100", "1e4", "1e5", "1e6", "1e7", "1e8")
       mtext(side = 1, at = log(xaxs), xaxst, line = -0.5, cex = 0.6)
-      mtext(side = 1, "Variance fish per 1000 m", cex = 0.9, line = 1)
-      mtext(side = 1, "3", cex = 0.7, line = 0.75, at = 17.25)
-      text(x = 0.2, y = 0.14, adj = 0,
+      mtext(side = 1, "Variance fish per tow", cex = 0.9, line = 1)
+      text(x = 0.5, y = 0.145, adj = 0,
            round(length(varpredicts[varpredicts < varY])/
                   length(varpredicts), 2), 
            cex = 0.9)
-      text(-7, 0.165, "b", xpd = T, cex = 1.5)
+      text(-5.25, 0.165, "b", xpd = T, cex = 1.5)
 
     # fraction 0s
 
@@ -127,8 +137,8 @@ ppc_fig <- function(data, model){
       for(i in 1:length(ht)){
         rect(x1[i], 0, x2[i], ht[i])
       }
-      points(rep(fr0Y, 2), c(0, 0.225), type = 'l', lwd = 3)
-
+      points(rep(fr0Y, 2), c(0, 0.235), type = 'l', lwd = 3)
+      points(c(-1e4, 1e4), c(0,0), type = "l")
       axis(2, las = 1, labels = F, tck = -0.02, at = seq(0, 0.25, 0.025))
       mtext(side = 2, las = 1, cex = 0.7, at = seq(0, 0.25, 0.05),
             c("0.00", "0.05", "0.1", "0.15", "0.2", "0.25"), line = 0.5)
@@ -137,12 +147,12 @@ ppc_fig <- function(data, model){
       mtext(side = 1, at = xaxs, xaxs, line = -0.5, cex = 0.6)
       mtext(side = 1, "Fraction of tows with 0 fish", cex = 0.9, 
             line = 1)
-      text(x = 0.78, y = 0.2125, adj = 0,
+      text(x = 0.79, y = 0.225, adj = 0,
            round(length(fr0predicts[fr0predicts < fr0Y])/
                   length(fr0predicts), 3), 
            cex = 0.9)
 
-      text(0.6, 0.275, "c", xpd = T, cex = 1.5)
+      text(0.625, 0.275, "c", xpd = T, cex = 1.5)
 
 
     # median of non-0s
@@ -160,7 +170,7 @@ ppc_fig <- function(data, model){
         rect(x1[i]-.25, 0, x1[i]+.25, ht[i])
       }
       points(rep(mn0Y, 2), c(0, 0.9), type = 'l', lwd = 3)
-
+      points(c(-1e4, 1e4), c(0,0), type = "l")
       axis(2, las = 1, labels = F, tck = -0.02, at = seq(0, 0.9, 0.1))
       mtext(side = 2, las = 1, cex = 0.7, at = seq(0, 0.8, 0.2),
             c("0.0", "0.2", "0.4", "0.6", "0.8"), line = 0.5)
@@ -169,12 +179,85 @@ ppc_fig <- function(data, model){
       mtext(side = 1, at = xaxs, xaxs, line = -0.5, cex = 0.6)
       mtext(side = 1, "Median of tows with > 0 fish", cex = 0.9, 
             line = 1.)
-      text(x = 1.125, y = 0.875, adj = 0,
+      text(x = 1.4, y = 0.9, adj = 0,
            round(length(mn0predicts[mn0predicts < mn0Y])/
                   length(mn0predicts), 2), 
            cex = 0.9)
 
-      text(-0.9, 0.935, "d", xpd = T, cex = 1.5)
+      text(-0.8, 0.935, "d", xpd = T, cex = 1.5)
+
+  # 95%CIupper
+
+      u95p <- u95predicts 
+      x1 <- seq(0, 44, 1)
+      x2 <- seq(1, 45, 1)  
+      ht <- rep(NA, length(x1))    
+      for(i in 1:length(ht)){
+        ht[i] <- length(u95p[u95p > x1[i] & u95p <= x2[i]])
+      }
+      ht <- ht/sum(ht)
+
+      plot(1, 1, type = 'n', bty = 'n', xaxt = 'n', yaxt = 'n', ylab = '', 
+           xlab = "", xlim = c(0, 45), ylim = c(0, 0.15))
+      for(i in 1:length(ht)){
+        rect(x1[i], 0, x2[i], ht[i])
+      }
+      points(rep(u95, 2), c(0, 0.155), type = 'l', lwd = 3)
+      points(c(-1e4, 1e4), c(0,0), type = "l")
+      axis(2, las = 1, labels = F, tck = -0.02, at = seq(0, 0.15, 0.025))
+      mtext(side = 2, las = 1, cex = 0.7, at = seq(0, 0.15, 0.05),
+            c("0.00", "0.05", "0.1", "0.15"), line = 0.5)
+      mtext(side = 2, "Frequency", cex = 1., line = 2.5)
+      xaxs <- c(0, 10, 20, 30, 40)
+      mtext(side = 1, at = (xaxs), xaxs, line = -0.5, cex = 0.6)
+      mtext(side = 1, "Upper 95% quantile fish per tow", cex = 0.9, line = 1)
+      text(x = 2, y = 0.15, adj = 0,
+           round(length(u95p[u95p < u95])/
+                 length(u95p), 3), 
+           cex = 0.9)
+      text(-11, 0.165, "e", xpd = T, cex = 1.5)
+
+  # MI
+
+      x1 <- seq(-0.001, 0.003, 0.0002)
+      x2 <- seq(-0.0008, 0.0032, 0.0002)  
+      ht <- rep(NA, length(x1))    
+      for(i in 1:length(ht)){
+        ht[i] <- length(MIp[MIp > x1[i] & MIp <= x2[i]])
+      }
+      ht <- ht/sum(ht)
+      MIo <- MI_obs$observed
+      oMIp <- post$post_MI$MI_e[1]
+      oMIsd <- mean(post$post_MI$MI_sd)
+      oMIl <- oMIp - 1.96 * oMIsd
+      oMIu <- oMIp + 1.96 * oMIsd
+
+      plot(1, 1, type = 'n', bty = 'n', xaxt = 'n', yaxt = 'n', ylab = '', 
+           xlab = "", xlim = c(-0.001, 0.004), ylim = c(0, 0.25))
+      points(rep(oMIp, 2), c(0, 0.25), type = 'l', lwd = 1)
+      points(rep(oMIl, 2), c(0, 0.25), type = 'l', lwd = 1, lty = 3)
+      points(rep(oMIu, 2), c(0, 0.25), type = 'l', lwd = 1, lty = 3)
+      points(c(-1e4, 1e4), c(0,0), type = "l")
+      for(i in 1:length(ht)){
+        rect(x1[i], 0, x2[i], ht[i])
+      }
+      points(rep(MIo, 2), c(0, 0.145), type = 'l', lwd = 3, lty = 3, 
+             col = rgb(0.4, 0.4, 0.4))
+
+      axis(2, las = 1, labels = F, tck = -0.02, at = seq(0, 0.25, 0.025))
+      mtext(side = 2, las = 1, cex = 0.7, at = seq(0, 0.25, 0.05),
+            c("0.00", "0.05", "0.1", "0.15", "0.2", "0.25"), line = 0.5)
+      mtext(side = 2, "Frequency", cex = 1., line = 2.5)
+      xaxs <- seq(-0.001, 0.003, 0.001)
+      xaxst <- c("-0.001", "0.000", "0.001", "0.002", "0.003")
+      mtext(side = 1, at = (xaxs), xaxst, line = -0.5, cex = 0.6)
+      mtext(side = 1, "Moran's I of residual fish per tow", cex = 0.9, 
+            line = 1)
+      text(x = -0.00035, y = 0.26, adj = 0,
+           round(length(MIp[MIp < oMIu & MIp >= oMIl])/
+                 length(MIp), 3), 
+           cex = 0.9, xpd = T)
+      text(-0.00235, 0.275, "f", xpd = T, cex = 1.5)
 
   dev.off()
 
@@ -253,10 +336,10 @@ date_hmap <- function(data, model){
     dcp <- colorRampPalette(c(rgb(0.8, 0.8, 0.8), rgb(0, 0, 0)), 
                             space = "rgb", interpolate = "spline")
 
-    tiff("output/Fig6.tif", height = 6, width = 4, units = "in", res = 600, 
+    tiff("output/Fig6.tif", height = 4, width = 6, units = "in", res = 600, 
          compression = "lzw")
 
-    par(mfrow = c(3, 2), mar = c(2, 3, 2, 1))
+    par(mfrow = c(2, 3), mar = c(2, 3, 2, 1))
 
 
   # predicted density
@@ -616,10 +699,10 @@ flow_hmap <- function(data, model){
     dcp <- colorRampPalette(c(rgb(0.8, 0.8, 0.8), rgb(0, 0, 0)), 
                             space = "rgb", interpolate = "spline")
 
-    tiff("output/Fig7.tif", height = 6, width = 4, units = "in", res = 600, 
+    tiff("output/Fig7.tif", height = 4, width = 6, units = "in", res = 600, 
          compression = "lzw")
  
-    par(mfrow = c(3, 2), mar = c(2.5, 3, 1.5, 1))
+    par(mfrow = c(2, 3), mar = c(2.5, 3, 1.5, 1))
 
     xtix <- log10(c(seq(10, 100, 10), seq(100, 900, 100), 
                     seq(1000, 9000, 1000)))
@@ -1105,10 +1188,10 @@ covariates_fig <- function(data, model){
 
   # PLOT
 
-      tiff("output/Fig4.tif", height = 6, width = 4, units = "in",
+      tiff("output/Fig4.tif", height = 4, width = 6, units = "in",
           res = 600, compression = "lzw")
 
-      par(mfrow = c(3, 2), mar = c(3, 3.5, 1, 1))
+      par(mfrow = c(2, 3), mar = c(3, 3.5, 1, 1))
 
         logoffset <- 0.25
         Nexamps <- 100
@@ -1955,7 +2038,8 @@ delta_map <- function(spatial_p){
         plot(gDist, wDist, xlim = c(0, 90), ylim = c(0, 90), las = 1, 
              xlab = "", ylab = "", type = 'n', 
              xaxt = 'n', yaxt = 'n', bty = "L")
-        mtext(side = 1, line = 0.35, cex = 0.45, "Crow-flies distance (km)")
+        mtext(side = 1, line = 0.35, cex = 0.45,
+              "\"Crow flies\" distance (km)")
         mtext(side = 2, line = 0.75, cex = 0.5, "In-water distance (km)")
         axis(1, at = seq(0, 80, 20), labels = F, tck = -0.02)
         axis(1, at = seq(0, 90, 10), labels = F, tck = -0.01)

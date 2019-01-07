@@ -61,7 +61,8 @@ summaryY(ds_data$Y)
 summaryV(ds_data$V)
 summaryD(ds_data$Y, ds_data$V)
 summaryTows(ds_data$Y, ds_data$V, ds_data$DSid, ds_data$TO, ds_data$W)
-MI_dens <- Moran.I(ds_data$Y/ds_data$V, DMY_inv)
+MI_obs <- Moran.I(ds_data$Y, DMY_inv)
+
 
 delta_map(spatial_p)
 salvage_time(salvage_p)
@@ -70,7 +71,7 @@ covariates_fig(ds_data, 9)
 ac_fig(9)
 date_hmap(ds_data, 9)
 flow_hmap(ds_data, 9)
-ppc_fig(ds_data, 9)
+ppc_fig(ds_data, 9, MI_obs)
 
 m9tab <- mcmc_table(9)
 
