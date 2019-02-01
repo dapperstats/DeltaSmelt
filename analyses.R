@@ -3,6 +3,11 @@
 #
 # This script runs the main analyses.
 #
+# In addition to R, it is required that you install JAGS to re-run
+#   any analyses: http://mcmc-jags.sourceforge.net/
+# Note, however, that analysis output is provided, and JAGS is
+#   not required to evaluate the outputs.
+#
 # The functions used in this script are housed in functions.R.
 # The data files used in this script are housed in the data/ subfolder. 
 # The model scripts used in this script are in the models/ subfolder, as is
@@ -12,6 +17,8 @@
 # Copies of the model MCMC output files are saved in the output/model_output
 #   subfolder, including the output from model 9 used in the manuscript
 
+pkgs <- c("runjags", "rjags", "ape", "mvtnorm", "png", "ape", "mgcv")
+install.packages(pkgs)
 library(runjags); library(rjags); library(ape); library(mvtnorm);
 library(png); library(ape); library(mgcv)
 source("functions.R")
