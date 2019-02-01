@@ -27,7 +27,7 @@
 #              spatially and temporally autocorrelated regression scaled to 
 #              tow-level density by velocity via an exponential scaling term 
 #              drawn from a regression 
-# 8          Poisson count drawn from visit-level density drawn from 
+# 9          Poisson count drawn from visit-level density drawn from 
 #              spatiotemporally autocorrelated regression scaled to 
 #              tow-level density by velocity via an exponential scaling term 
 #              drawn from a regression 
